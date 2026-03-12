@@ -14,6 +14,7 @@ import {
   SearchStatusData,
   ContentType,
   RequestPolicyMode,
+  isMetadataBook,
 } from '../types';
 import { getReleases, getReleaseSources } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
@@ -93,10 +94,12 @@ interface ReleaseModalProps {
   defaultLanguages: string[];
   bookLanguages: Language[];
   currentStatus: StatusData;
-  defaultReleaseSource?: string;  // Default tab to show (e.g., 'direct_download')
+  defaultReleaseSource?: string;  // Default book tab to show (e.g., 'direct_download')
+  defaultAudiobookReleaseSource?: string;  // Default audiobook tab to show
   onSearchSeries?: (seriesName: string, seriesId?: string) => void;  // Callback to search for series
   defaultShowManualQuery?: boolean;
   isRequestMode?: boolean;
+  showReleaseSourceLinks?: boolean;
   onShowToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -154,7 +157,7 @@ const ReleaseThumbnail = ({ preview, title }: { preview?: string; title?: string
   }
 
   return (
-    <div className="relative w-7 h-10 sm:w-8 sm:h-12 rounded-sm overflow-hidden bg-zinc-100 dark:bg-zinc-800 border-hairline border-white/40 dark:border-zinc-700/70 shrink-0">
+    <div className="relative w-7 h-10 sm:w-8 sm:h-12 rounded-sm overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-white/40 dark:border-zinc-700/70 shrink-0">
       {!imageLoaded && (
         <div className="absolute inset-0 bg-linear-to-r from-gray-200 via-gray-100 to-gray-200 dark:from-gray-700 dark:via-gray-600 dark:to-gray-700 animate-pulse" />
       )}
@@ -224,6 +227,7 @@ const ReleaseRow = ({
   gridTemplate,
   leadingCell,
   onlineServers,
+  showReleaseSourceLinks,
 }: {
   release: Release;
   index: number;
@@ -233,6 +237,7 @@ const ReleaseRow = ({
   gridTemplate: string;
   leadingCell?: LeadingCellConfig;
   onlineServers?: string[];
+  showReleaseSourceLinks: boolean;
 }) => {
   const author = release.extra?.author as string | undefined;
 
@@ -271,7 +276,7 @@ const ReleaseRow = ({
         {/* Fixed: Title and author */}
         <div className="min-w-0">
           <p className="text-sm font-medium line-clamp-2" title={release.title}>
-            {release.info_url ? (
+            {showReleaseSourceLinks && release.info_url ? (
               <a
                 href={release.info_url}
                 target="_blank"
@@ -318,7 +323,7 @@ const ReleaseRow = ({
         <div className="min-w-0">
           {/* Title and author on same line */}
           <p className="text-sm leading-tight line-clamp-2" title={release.title}>
-            {release.info_url ? (
+            {showReleaseSourceLinks && release.info_url ? (
               <a
                 href={release.info_url}
                 target="_blank"
@@ -529,15 +534,20 @@ export const ReleaseModal = ({
   bookLanguages,
   currentStatus,
   defaultReleaseSource,
+  defaultAudiobookReleaseSource,
   onSearchSeries,
   defaultShowManualQuery = false,
   isRequestMode = false,
+  showReleaseSourceLinks = true,
   onShowToast,
 }: ReleaseModalProps) => {
   // Use audiobook formats when in audiobook mode
   const effectiveFormats = contentType === 'audiobook' && supportedAudiobookFormats.length > 0
     ? supportedAudiobookFormats
     : supportedFormats;
+  const preferredDefaultReleaseSource = contentType === 'audiobook'
+    ? (defaultAudiobookReleaseSource || defaultReleaseSource)
+    : defaultReleaseSource;
   const [isClosing, setIsClosing] = useState(false);
   const [isRequestingBook, setIsRequestingBook] = useState(false);
 
@@ -790,15 +800,15 @@ export const ReleaseModal = ({
           return;
         }
 
-        // Set active tab: prefer defaultReleaseSource if enabled and supports content type
+        // Set active tab: prefer the configured default source if enabled and supports content type
         if (supportedSources.length > 0) {
           const enabledSources = supportedSources.filter(s => s.enabled);
-          const defaultIsEnabled = defaultReleaseSource &&
-            enabledSources.some(s => s.name === defaultReleaseSource);
+          const defaultIsEnabled = preferredDefaultReleaseSource &&
+            enabledSources.some(s => s.name === preferredDefaultReleaseSource);
 
           let defaultSource: string;
           if (defaultIsEnabled) {
-            defaultSource = defaultReleaseSource;
+            defaultSource = preferredDefaultReleaseSource;
           } else if (enabledSources.length > 0) {
             defaultSource = enabledSources[0].name;
           } else {
@@ -822,7 +832,7 @@ export const ReleaseModal = ({
     };
 
     fetchSources();
-  }, [book, defaultReleaseSource, contentType]);
+  }, [book, preferredDefaultReleaseSource, contentType]);
 
   // Fetch releases when active tab changes (with caching)
   // Initial fetch always uses ISBN-first search; expansion is handled by handleExpandSearch
@@ -948,16 +958,16 @@ export const ReleaseModal = ({
     });
 
     // Sort so default source appears first
-    if (defaultReleaseSource) {
+    if (preferredDefaultReleaseSource) {
       enabledTabs.sort((a, b) => {
-        if (a.name === defaultReleaseSource) return -1;
-        if (b.name === defaultReleaseSource) return 1;
+        if (a.name === preferredDefaultReleaseSource) return -1;
+        if (b.name === preferredDefaultReleaseSource) return 1;
         return 0;
       });
     }
 
     return enabledTabs;
-  }, [availableSources, book?.provider, defaultReleaseSource, contentType]);
+  }, [availableSources, book?.provider, preferredDefaultReleaseSource, contentType]);
 
   // Update tab indicator position when active tab changes
   useEffect(() => {
@@ -1276,6 +1286,7 @@ export const ReleaseModal = ({
   const providerDisplay =
     book.provider_display_name ||
     (book.provider ? book.provider.charAt(0).toUpperCase() + book.provider.slice(1) : 'Unknown');
+  const showBookSourceLink = Boolean(book.source_url) && (isMetadataBook(book) || showReleaseSourceLinks);
 
   const currentTabLoading = loadingBySource[activeTab] ?? false;
   const currentTabError = errorBySource[activeTab] ?? null;
@@ -1297,13 +1308,35 @@ export const ReleaseModal = ({
         aria-modal="true"
         aria-labelledby={titleId}
       >
-        <div className="flex h-full sm:h-[90vh] sm:max-h-[90vh] flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border-hairline border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft) text-(--text) shadow-none sm:shadow-2xl">
+        <div className="flex h-full sm:h-[90vh] sm:max-h-[90vh] flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft) text-(--text) shadow-none sm:shadow-2xl">
           {/* Header */}
-          <header className="flex items-start gap-3 border-b-hairline border-(--border-muted) px-5 py-4">
-            {/* Animated thumbnail that appears when scrolling */}
+          <header className="flex items-start gap-3 border-b border-(--border-muted) px-5 py-4">
+            {/* Mobile: static thumbnail always visible */}
+            {!isRequestMode && (
+              <div className="sm:hidden shrink-0">
+                {book.preview ? (
+                  <img
+                    src={book.preview}
+                    alt=""
+                    width={46}
+                    height={68}
+                    className="rounded-sm shadow-md object-cover object-top"
+                    style={{ width: 46, height: 68, minWidth: 46 }}
+                  />
+                ) : (
+                  <div
+                    className="rounded-sm border border-dashed border-(--border-muted) bg-(--bg)/60 flex items-center justify-center text-[7px] text-zinc-500"
+                    style={{ width: 46, height: 68, minWidth: 46 }}
+                  >
+                    No cover
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Desktop: animated thumbnail that appears when scrolling */}
             {!isRequestMode && (
               <div
-                className="shrink-0 overflow-hidden transition-[width,margin] duration-300 ease-out"
+                className="hidden sm:block shrink-0 overflow-hidden transition-[width,margin] duration-300 ease-out"
                 style={{
                   width: showHeaderThumb ? 46 : 0,
                   marginRight: showHeaderThumb ? 0 : -12,
@@ -1324,7 +1357,7 @@ export const ReleaseModal = ({
                     />
                   ) : (
                     <div
-                      className="rounded-sm border-hairline border-dashed border-(--border-muted) bg-(--bg)/60 flex items-center justify-center text-[7px] text-zinc-500"
+                      className="rounded-sm border border-dashed border-(--border-muted) bg-(--bg)/60 flex items-center justify-center text-[7px] text-zinc-500"
                       style={{ width: 46, height: 68, minWidth: 46 }}
                     >
                       No cover
@@ -1364,15 +1397,15 @@ export const ReleaseModal = ({
           <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-y-auto">
             {/* Book summary - scrolls with content */}
             {!isRequestMode && (
-              <div ref={bookSummaryRef} className="flex gap-4 px-5 py-4 border-b-hairline border-(--border-muted)">
+              <div ref={bookSummaryRef} className="flex gap-4 px-5 py-4 border-b border-(--border-muted)">
                 {book.preview ? (
                   <img
                     src={book.preview}
                     alt="Book cover"
-                    className={`rounded-lg shadow-md object-cover object-top shrink-0 ${book.series_name ? 'w-24 h-[144px]' : 'w-20 h-[120px]'}`}
+                    className={`hidden sm:block rounded-lg shadow-md object-cover object-top shrink-0 ${book.series_name ? 'w-24 h-[144px]' : 'w-20 h-[120px]'}`}
                   />
                 ) : (
-                  <div className={`rounded-lg border-hairline border-dashed border-(--border-muted) bg-(--bg)/60 flex items-center justify-center text-[10px] text-zinc-500 shrink-0 ${book.series_name ? 'w-24 h-[144px]' : 'w-20 h-[120px]'}`}>
+                  <div className={`hidden sm:flex rounded-lg border border-dashed border-(--border-muted) bg-(--bg)/60 items-center justify-center text-[10px] text-zinc-500 shrink-0 ${book.series_name ? 'w-24 h-[144px]' : 'w-20 h-[120px]'}`}>
                     No cover
                   </div>
                 )}
@@ -1467,7 +1500,7 @@ export const ReleaseModal = ({
                         ISBN: {book.isbn_13 || book.isbn_10}
                       </span>
                     )}
-                    {book.source_url && (
+                    {showBookSourceLink && (
                       <a
                         href={book.source_url}
                         target="_blank"
@@ -1480,28 +1513,32 @@ export const ReleaseModal = ({
                         </svg>
                       </a>
                     )}
-                    {onRequestBook && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void handleRequestBook();
-                        }}
-                        disabled={isRequestingBook}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                        </svg>
-                        {isRequestingBook ? 'Adding...' : 'Add to requests'}
-                      </button>
-                    )}
-                    {bookSupportsTargets(book) && (
-                      <BookTargetDropdown
-                        provider={book.provider!}
-                        bookId={book.provider_id!}
-                        onShowToast={onShowToast}
-                        variant="pill"
-                      />
+                    {(onRequestBook || bookSupportsTargets(book)) && (
+                      <span className="inline-flex items-center gap-3">
+                        {onRequestBook && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleRequestBook();
+                            }}
+                            disabled={isRequestingBook}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                            {isRequestingBook ? 'Adding...' : 'Add to requests'}
+                          </button>
+                        )}
+                        {bookSupportsTargets(book) && (
+                          <BookTargetDropdown
+                            provider={book.provider!}
+                            bookId={book.provider_id!}
+                            onShowToast={onShowToast}
+                            variant="pill"
+                          />
+                        )}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1509,7 +1546,7 @@ export const ReleaseModal = ({
             )}
 
             {/* Source tabs + filters - sticky within scroll container */}
-            <div className="sticky top-0 z-10 border-b-hairline border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft)">
+            <div className="sticky top-0 z-10 border-b border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft)">
               {sourcesLoading ? (
                 <div className="flex gap-1 px-5 py-2">
                   <div className="h-10 w-32 animate-pulse bg-zinc-200 dark:bg-zinc-700 rounded-sm" />
@@ -1654,7 +1691,7 @@ export const ReleaseModal = ({
                             {availableFormats.length > 1 && (
                               <>
                                 {allSortOptions.length > 0 && (
-                                  <div className="mx-2 my-1 border-t-hairline border-zinc-200 dark:border-zinc-700" />
+                                  <div className="mx-2 my-1 border-t border-zinc-200 dark:border-zinc-700" />
                                 )}
                                 <button
                                   type="button"
@@ -1852,7 +1889,7 @@ export const ReleaseModal = ({
 
             {/* Manual query panel (below source tabs) */}
             {showManualQuery && (
-              <div className="px-5 py-3 border-b-hairline border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft)">
+              <div className="px-5 py-3 border-b border-(--border-muted) bg-(--bg) sm:bg-(--bg-soft)">
                 <form
                   className="flex items-center gap-2"
                   onSubmit={async (e) => {
@@ -1907,7 +1944,7 @@ export const ReleaseModal = ({
                     value={manualQuery}
                     onChange={(e) => setManualQuery(e.target.value)}
                     placeholder="Type a custom search query (overrides all sources)"
-                    className="w-full px-3 py-2 text-sm rounded-lg border-hairline border-(--border-muted) bg-(--bg) text-(--text)"
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-(--border-muted) bg-(--bg) text-(--text)"
                   />
                   <button
                     type="submit"
@@ -1981,6 +2018,7 @@ export const ReleaseModal = ({
                         gridTemplate={columnConfig.grid_template}
                         leadingCell={columnConfig.leading_cell}
                         onlineServers={columnConfig.online_servers}
+                        showReleaseSourceLinks={showReleaseSourceLinks}
                       />
                     ))}
                   </div>
@@ -2019,7 +2057,7 @@ export const ReleaseModal = ({
             {/* Sticky search status indicator - stays at bottom of visible scroll area */}
             {searchStatus && searchStatus.source === activeTab && currentTabLoading && (
               <div className="sticky bottom-0 z-10 flex items-center justify-center pointer-events-none pb-4 pt-2">
-                <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-(--bg-soft) border-hairline border-(--border-muted) text-zinc-500 dark:text-zinc-400 text-sm shadow-lg pointer-events-auto">
+                <div className="flex items-center gap-2.5 px-4 py-2 rounded-xl bg-(--bg-soft) border border-(--border-muted) text-zinc-500 dark:text-zinc-400 text-sm shadow-lg pointer-events-auto">
                   {searchStatus.phase !== 'complete' && searchStatus.phase !== 'error' && (
                     <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                   )}
